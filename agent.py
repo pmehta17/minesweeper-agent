@@ -1,3 +1,6 @@
+import heapq
+from collections import deque
+
 from utils import Action, ActionType, Condition
 
 
@@ -40,6 +43,12 @@ class Agent:
         """
         directions = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
         return [(x + dx, y + dy) for dx, dy in directions if 0 <= x + dx < self.game.rows and 0 <= y + dy < self.game.cols]
+
+    def state_to_key(self, state):
+        """
+        Helper method to convert the 2D state list into a hashable tuple of tuples.
+        """
+        return tuple(tuple(row) for row in state)
 
 
 class ManualGuiAgent(Agent):
@@ -191,7 +200,37 @@ class BFSAgent(SearchAgent):
                     initial_state[i][j] = 'S'
 
         # TODO: Complete the BFS search algorithm
-        raise NotImplementedError()
+        # Create an initial state: mark clue cells as safe, rest as unknown ('_')
+        initial_state = [['_' for _ in range(self.cols)] for _ in range(self.rows)]
+        for i in range(self.rows):
+            for j in range(self.cols):
+                if isinstance(clues[i][j], int) and clues[i][j] >= 0:
+                    initial_state[i][j] = 'S'
+
+        # Use a FIFO queue for BFS: each node is (state, action_sequence)
+        queue = deque()
+        queue.append((initial_state, []))
+        visited = set()
+        visited.add(self.state_to_key(initial_state))
+
+        while queue:
+            state, actions = queue.popleft()
+            if self.is_goal_state(clues, state):
+                return state, actions
+            for action in self.get_next_actions(state):
+                i, j, label = action
+                if state[i][j] != '_':  # Skip if already set
+                    continue
+                # Generate a new state with this action applied
+                new_state = [row[:] for row in state]
+                new_state[i][j] = label
+                key = self.state_to_key(new_state)
+                if key not in visited:
+                    visited.add(key)
+                    new_actions = actions + [action]
+                    queue.append((new_state, new_actions))
+        return None, []
+
     
 
 class DFSAgent(SearchAgent):
@@ -208,7 +247,29 @@ class DFSAgent(SearchAgent):
                     initial_state[i][j] = 'S'
 
         # TODO: Complete the DFS search algorithm
-        raise NotImplementedError()
+        # Use a LIFO stack for DFS: each node is (state, action_sequence)
+        stack = []
+        stack.append((initial_state, []))
+        visited = set()
+        visited.add(self.state_to_key(initial_state))
+
+        while stack:
+            state, actions = stack.pop()
+            if self.is_goal_state(clues, state):
+                return state, actions
+            for action in self.get_next_actions(state):
+                i, j, label = action
+                if state[i][j] != '_':  # Already assigned
+                    continue
+                new_state = [row[:] for row in state]
+                new_state[i][j] = label
+                key = self.state_to_key(new_state)
+                if key not in visited:
+                    visited.add(key)
+                    new_actions = actions + [action]
+                    stack.append((new_state, new_actions))
+        return None, []
+
 
 
 class AStarAgent(SearchAgent):
@@ -233,7 +294,21 @@ class AStarAgent(SearchAgent):
                  (1000 or more) is added for invalid states where the number of bombs exceeds the clue value.
         """
         # TODO: Complete the heuristic function
-        raise NotImplementedError()
+        h = 0
+        for i in range(self.game.rows):
+            for j in range(self.game.cols):
+                if isinstance(clues[i][j], int) and clues[i][j] >= 0:
+                    bomb_count = 0
+                    for ni, nj in self.get_neighbors(i, j):
+                        if state[ni][nj] == 'B':
+                            bomb_count += 1
+                    if bomb_count > clues[i][j]:
+                        # Over-assigned bombs – penalize heavily.
+                        return 1000 + (bomb_count - clues[i][j])
+                    else:
+                        # Under-assigned bombs contribute to the heuristic.
+                        h += (clues[i][j] - bomb_count)
+        return h
 
     def search(self, clues):
         initial_state = [['_' for _ in range(self.game.cols)] for _ in range(self.game.rows)]
@@ -245,4 +320,30 @@ class AStarAgent(SearchAgent):
                     initial_state[i][j] = 'S'
 
         # TODO: Complete the BFS search algorithm
-        raise NotImplementedError()
+        # A* search: each node is (priority, cost, state, action_sequence)
+        open_set = []
+        start_cost = 0
+        start_priority = start_cost + self.heuristic(clues, initial_state)
+        heapq.heappush(open_set, (start_priority, start_cost, initial_state, []))
+        # Use a dictionary to store the minimum cost found for a given state key.
+        visited = {self.state_to_key(initial_state): start_cost}
+
+        while open_set:
+            priority, cost, state, actions = heapq.heappop(open_set)
+            if self.is_goal_state(clues, state):
+                return state, actions
+            for action in self.get_next_actions(state):
+                i, j, label = action
+                if state[i][j] != '_':
+                    continue
+                new_state = [row[:] for row in state]
+                new_state[i][j] = label
+                new_cost = cost + 1
+                key = self.state_to_key(new_state)
+                if key not in visited or new_cost < visited[key]:
+                    visited[key] = new_cost
+                    h = self.heuristic(clues, new_state)
+                    new_priority = new_cost + h
+                    new_actions = actions + [action]
+                    heapq.heappush(open_set, (new_priority, new_cost, new_state, new_actions))
+        return None, []
